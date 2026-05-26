@@ -42,8 +42,44 @@ interface MealData {
   }> | null
 }
 
+// Supported TheMealDB cuisine areas
+const SUPPORTED_CUISINES = [
+  'American', 'British', 'Canadian', 'Chinese', 'Croatian', 'Dutch', 
+  'Egyptian', 'Filipino', 'French', 'Greek', 'Indian', 'Irish', 
+  'Italian', 'Jamaican', 'Japanese', 'Kenyan', 'Malaysian', 'Mexican', 
+  'Moroccan', 'Polish', 'Portuguese', 'Russian', 'Spanish', 'Thai', 
+  'Tunisian', 'Turkish', 'Vietnamese'
+]
+
+// Map continent/region to broad cuisine category for fallback
+const REGION_TO_CUISINE: Record<string, string> = {
+  'Asia': 'Asian',
+  'Europe': 'European',
+  'Africa': 'African',
+  'Americas': 'American',
+  'Oceania': 'British',
+  'Antarctic': 'British',
+}
+
+// Map region to a supported TheMealDB cuisine for API queries
+const REGION_TO_MEALDB_CUISINE: Record<string, string> = {
+  'Asia': 'Chinese',
+  'Europe': 'Italian',
+  'Africa': 'Moroccan',
+  'Americas': 'American',
+  'Oceania': 'British',
+  'Antarctic': 'British',
+}
+
+interface MealAreaResult {
+  area: string
+  isDirectMatch: boolean
+  regionFallback: string | null
+  continentCuisine: string
+}
+
 // Map country regions/subregions to TheMealDB areas
-function getMealDBArea(region: string, subregion?: string, countryName?: string): string {
+function getMealDBArea(region: string, subregion?: string, countryName?: string): MealAreaResult {
   // Direct country mappings that TheMealDB supports
   const countryMappings: Record<string, string> = {
     'Japan': 'Japanese',
@@ -75,11 +111,19 @@ function getMealDBArea(region: string, subregion?: string, countryName?: string)
     'Croatia': 'Croatian',
   }
 
+  const continentCuisine = REGION_TO_CUISINE[region] || 'International'
+  const regionFallbackCuisine = REGION_TO_MEALDB_CUISINE[region] || 'Italian'
+
   if (countryName && countryMappings[countryName]) {
-    return countryMappings[countryName]
+    return {
+      area: countryMappings[countryName],
+      isDirectMatch: true,
+      regionFallback: regionFallbackCuisine,
+      continentCuisine,
+    }
   }
 
-  // Regional fallbacks
+  // Regional fallbacks - these are NOT direct matches
   const regionMappings: Record<string, string> = {
     'Eastern Asia': 'Chinese',
     'South-Eastern Asia': 'Thai',
@@ -97,20 +141,13 @@ function getMealDBArea(region: string, subregion?: string, countryName?: string)
     'South America': 'Mexican',
   }
 
-  if (subregion && regionMappings[subregion]) {
-    return regionMappings[subregion]
+  // Return without direct match - will trigger fallback UI
+  return {
+    area: subregion && regionMappings[subregion] ? regionMappings[subregion] : regionFallbackCuisine,
+    isDirectMatch: false,
+    regionFallback: regionFallbackCuisine,
+    continentCuisine,
   }
-
-  // Broader region fallbacks
-  const broadRegionMappings: Record<string, string> = {
-    'Asia': 'Chinese',
-    'Europe': 'Italian',
-    'Africa': 'Moroccan',
-    'Americas': 'American',
-    'Oceania': 'British',
-  }
-
-  return broadRegionMappings[region] || 'Italian'
 }
 
 export async function GET(request: NextRequest) {
@@ -173,23 +210,39 @@ export async function GET(request: NextRequest) {
             .catch(() => null) as Promise<ExchangeRateData | null>
         : Promise.resolve(currencyCode === 'USD' ? { rates: { USD: 1 } } : null),
 
-      // TheMealDB API call for regional dishes
-      fetch(`https://www.themealdb.com/api/json/v1/1/filter.php?a=${mealArea}`)
-        .then((res) => (res.ok ? res.json() : null))
-        .catch(() => null) as Promise<MealData | null>,
+      // TheMealDB API call for regional dishes - only fetch if direct match
+      mealArea.isDirectMatch
+        ? fetch(`https://www.themealdb.com/api/json/v1/1/filter.php?a=${mealArea.area}`)
+            .then((res) => (res.ok ? res.json() : null))
+            .catch(() => null) as Promise<MealData | null>
+        : Promise.resolve(null),
     ])
 
-    // Pick a random meal from the results (if available)
+    // Pick a random meal from the results (if available and direct match)
     let localDish = null
-    if (mealResult?.meals && mealResult.meals.length > 0) {
+    if (mealArea.isDirectMatch && mealResult?.meals && mealResult.meals.length > 0) {
       const randomIndex = Math.floor(Math.random() * Math.min(mealResult.meals.length, 10))
       const meal = mealResult.meals[randomIndex]
       localDish = {
         name: meal.strMeal,
         image: meal.strMealThumb,
-        cuisine: mealArea,
+        cuisine: mealArea.area,
+        isDirectMatch: true,
       }
     }
+
+    // Build local flavors response with fallback info
+    const localFlavorsData = localDish
+      ? localDish
+      : {
+          name: null,
+          image: null,
+          cuisine: null,
+          isDirectMatch: false,
+          region: countryData.region,
+          regionCuisine: mealArea.continentCuisine,
+          fallbackArea: mealArea.regionFallback,
+        }
 
     // Build response
     const response = {
@@ -228,7 +281,7 @@ export async function GET(request: NextRequest) {
         timezone: weatherResult?.timezone ?? countryData.timezones?.[0] ?? null,
         capital: countryData.capital?.[0] ?? 'N/A',
       },
-      localFlavors: localDish,
+      localFlavors: localFlavorsData,
     }
 
     return NextResponse.json(response)
