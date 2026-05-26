@@ -1,3 +1,6 @@
+'use client'
+
+import { useState } from 'react'
 import {
   Thermometer,
   MapPin,
@@ -82,18 +85,58 @@ function getWeatherInfo(code: number | null): {
   return { icon: <Wind className="h-8 w-8 text-gray-400" />, description: 'Windy' }
 }
 
+function celsiusToFahrenheit(celsius: number): number {
+  return (celsius * 9) / 5 + 32
+}
+
 export function ClimateCard({ capital, temperature, weatherCode }: ClimateCardProps) {
+  const [unit, setUnit] = useState<'C' | 'F'>('C')
   const weather = getWeatherInfo(weatherCode)
+
+  const displayTemp =
+    temperature !== null
+      ? unit === 'C'
+        ? Math.round(temperature)
+        : Math.round(celsiusToFahrenheit(temperature))
+      : null
 
   return (
     <div className="bg-card border border-border rounded-2xl p-6 h-full">
-      <div className="flex items-center gap-3 mb-6">
-        <div className="p-2.5 bg-chart-2/20 rounded-xl">
-          <Thermometer className="h-5 w-5 text-chart-2" />
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 bg-chart-2/20 rounded-xl">
+            <Thermometer className="h-5 w-5 text-chart-2" />
+          </div>
+          <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
+            Climate
+          </h3>
         </div>
-        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
-          Climate
-        </h3>
+        
+        {/* Metric/Imperial Toggle */}
+        <div className="flex items-center bg-secondary rounded-lg p-0.5">
+          <button
+            onClick={() => setUnit('C')}
+            className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+              unit === 'C'
+                ? 'bg-primary text-primary-foreground'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+            aria-label="Celsius"
+          >
+            °C
+          </button>
+          <button
+            onClick={() => setUnit('F')}
+            className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+              unit === 'F'
+                ? 'bg-primary text-primary-foreground'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+            aria-label="Fahrenheit"
+          >
+            °F
+          </button>
+        </div>
       </div>
 
       <div className="space-y-5">
@@ -110,7 +153,7 @@ export function ClimateCard({ capital, temperature, weatherCode }: ClimateCardPr
             <div>
               <p className="text-sm text-muted-foreground mb-1">Current Weather</p>
               <p className="text-4xl font-bold text-foreground">
-                {temperature !== null ? `${Math.round(temperature)}°C` : 'N/A'}
+                {displayTemp !== null ? `${displayTemp}°${unit}` : 'N/A'}
               </p>
               <p className="text-sm text-muted-foreground mt-1">{weather.description}</p>
             </div>
