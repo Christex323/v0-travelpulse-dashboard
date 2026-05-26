@@ -17,6 +17,9 @@ interface CountryData {
     svg: string
   }
   latlng: [number, number]
+  region: string
+  subregion?: string
+  timezones: string[]
 }
 
 interface WeatherData {
@@ -30,6 +33,86 @@ interface ExchangeRateData {
   rates: Record<string, number>
 }
 
+interface MealData {
+  meals: Array<{
+    strMeal: string
+    strMealThumb: string
+    strArea: string
+    idMeal: string
+  }> | null
+}
+
+// Map country regions/subregions to TheMealDB areas
+function getMealDBArea(region: string, subregion?: string, countryName?: string): string {
+  // Direct country mappings that TheMealDB supports
+  const countryMappings: Record<string, string> = {
+    'Japan': 'Japanese',
+    'China': 'Chinese',
+    'Thailand': 'Thai',
+    'Vietnam': 'Vietnamese',
+    'India': 'Indian',
+    'Malaysia': 'Malaysian',
+    'Philippines': 'Filipino',
+    'Greece': 'Greek',
+    'Italy': 'Italian',
+    'France': 'French',
+    'Spain': 'Spanish',
+    'Portugal': 'Portuguese',
+    'United Kingdom': 'British',
+    'Ireland': 'Irish',
+    'Netherlands': 'Dutch',
+    'Poland': 'Polish',
+    'Russia': 'Russian',
+    'Turkey': 'Turkish',
+    'Egypt': 'Egyptian',
+    'Morocco': 'Moroccan',
+    'Tunisia': 'Tunisian',
+    'Kenya': 'Kenyan',
+    'United States': 'American',
+    'Canada': 'Canadian',
+    'Mexico': 'Mexican',
+    'Jamaica': 'Jamaican',
+    'Croatia': 'Croatian',
+  }
+
+  if (countryName && countryMappings[countryName]) {
+    return countryMappings[countryName]
+  }
+
+  // Regional fallbacks
+  const regionMappings: Record<string, string> = {
+    'Eastern Asia': 'Chinese',
+    'South-Eastern Asia': 'Thai',
+    'Southern Asia': 'Indian',
+    'Western Asia': 'Turkish',
+    'Northern Africa': 'Moroccan',
+    'Eastern Africa': 'Kenyan',
+    'Southern Europe': 'Italian',
+    'Western Europe': 'French',
+    'Northern Europe': 'British',
+    'Eastern Europe': 'Polish',
+    'Central America': 'Mexican',
+    'Caribbean': 'Jamaican',
+    'North America': 'American',
+    'South America': 'Mexican',
+  }
+
+  if (subregion && regionMappings[subregion]) {
+    return regionMappings[subregion]
+  }
+
+  // Broader region fallbacks
+  const broadRegionMappings: Record<string, string> = {
+    'Asia': 'Chinese',
+    'Europe': 'Italian',
+    'Africa': 'Moroccan',
+    'Americas': 'American',
+    'Oceania': 'British',
+  }
+
+  return broadRegionMappings[region] || 'Italian'
+}
+
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams
   const country = searchParams.get('country')
@@ -39,7 +122,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // First, fetch country data to get coordinates and currency
+    // First, fetch country data to get coordinates, currency, region, and timezone
     const countryResponse = await fetch(
       `https://restcountries.com/v3.1/name/${encodeURIComponent(country)}?fullText=false`
     )
@@ -67,14 +150,21 @@ export async function GET(request: NextRequest) {
       ? countryData.currencies?.[currencyCode]
       : null
 
-    // Fetch weather and exchange rate concurrently using Promise.all
-    const [weatherResult, exchangeResult] = await Promise.all([
-      // Weather API call
+    // Get meal area based on country/region
+    const mealArea = getMealDBArea(
+      countryData.region,
+      countryData.subregion,
+      countryData.name.common
+    )
+
+    // Fetch weather, exchange rate, and meals concurrently using Promise.all
+    const [weatherResult, exchangeResult, mealResult] = await Promise.all([
+      // Weather API call with timezone
       fetch(
-        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,weather_code`
+        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,weather_code&timezone=auto`
       )
         .then((res) => (res.ok ? res.json() : null))
-        .catch(() => null) as Promise<WeatherData | null>,
+        .catch(() => null) as Promise<(WeatherData & { timezone: string }) | null>,
 
       // Exchange rate API call (Frankfurter)
       currencyCode && currencyCode !== 'USD'
@@ -82,7 +172,24 @@ export async function GET(request: NextRequest) {
             .then((res) => (res.ok ? res.json() : null))
             .catch(() => null) as Promise<ExchangeRateData | null>
         : Promise.resolve(currencyCode === 'USD' ? { rates: { USD: 1 } } : null),
+
+      // TheMealDB API call for regional dishes
+      fetch(`https://www.themealdb.com/api/json/v1/1/filter.php?a=${mealArea}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .catch(() => null) as Promise<MealData | null>,
     ])
+
+    // Pick a random meal from the results (if available)
+    let localDish = null
+    if (mealResult?.meals && mealResult.meals.length > 0) {
+      const randomIndex = Math.floor(Math.random() * Math.min(mealResult.meals.length, 10))
+      const meal = mealResult.meals[randomIndex]
+      localDish = {
+        name: meal.strMeal,
+        image: meal.strMealThumb,
+        cuisine: mealArea,
+      }
+    }
 
     // Build response
     const response = {
@@ -94,6 +201,8 @@ export async function GET(request: NextRequest) {
         languages: countryData.languages
           ? Object.values(countryData.languages)
           : [],
+        region: countryData.region,
+        subregion: countryData.subregion,
       },
       climate: {
         capital: countryData.capital?.[0] ?? 'N/A',
@@ -111,6 +220,11 @@ export async function GET(request: NextRequest) {
             ? 1
             : null,
       },
+      localTime: {
+        timezone: weatherResult?.timezone ?? countryData.timezones?.[0] ?? null,
+        capital: countryData.capital?.[0] ?? 'N/A',
+      },
+      localFlavors: localDish,
     }
 
     return NextResponse.json(response)
