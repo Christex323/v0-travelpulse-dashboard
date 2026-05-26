@@ -203,6 +203,10 @@ export async function GET(request: NextRequest) {
           : [],
         region: countryData.region,
         subregion: countryData.subregion,
+        coordinates: {
+          lat,
+          lng,
+        },
       },
       climate: {
         capital: countryData.capital?.[0] ?? 'N/A',

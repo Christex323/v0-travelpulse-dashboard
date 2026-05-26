@@ -9,6 +9,7 @@ import { FinancialsCard } from '@/components/financials-card'
 import { LocalTimeCard } from '@/components/local-time-card'
 import { LocalFlavorsCard } from '@/components/local-flavors-card'
 import { DiscoverCard } from '@/components/discover-card'
+import { DiningMapCard } from '@/components/dining-map-card'
 import { ErrorState, EmptyState } from '@/components/states'
 
 interface DestinationData {
@@ -20,6 +21,10 @@ interface DestinationData {
     languages: string[]
     region: string
     subregion?: string
+    coordinates: {
+      lat: number
+      lng: number
+    }
   }
   climate: {
     capital: string
@@ -201,6 +206,20 @@ export default function Home() {
                 <LocalFlavorsCard dish={data.localFlavors} />
               </div>
 
+              {/* Dining Map Section */}
+              <div className="pt-2">
+                <h3 className="text-lg font-semibold text-foreground mb-4 flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 bg-orange-500 rounded-full" />
+                  Dining
+                </h3>
+                <DiningMapCard
+                  lat={data.geography.coordinates.lat}
+                  lng={data.geography.coordinates.lng}
+                  capital={data.climate.capital}
+                  countryName={data.geography.name}
+                />
+              </div>
+
               {/* Discover Section - Places to Visit */}
               <div className="pt-2">
                 <h3 className="text-lg font-semibold text-foreground mb-4 flex items-center gap-2">
@@ -223,7 +242,7 @@ export default function Home() {
       <footer className="border-t border-border py-6">
         <div className="max-w-7xl mx-auto px-4 sm:px-6">
           <p className="text-center text-sm text-muted-foreground">
-            Powered by REST Countries, Open-Meteo, Frankfurter, TheMealDB, and Wikipedia APIs
+            Powered by REST Countries, Open-Meteo, Frankfurter, TheMealDB, Wikipedia, and OpenStreetMap
           </p>
         </div>
       </footer>
