@@ -33,121 +33,114 @@ interface ExchangeRateData {
   rates: Record<string, number>
 }
 
-interface MealData {
-  meals: Array<{
-    strMeal: string
-    strMealThumb: string
-    strArea: string
-    idMeal: string
-  }> | null
+interface WikipediaData {
+  query?: {
+    pages?: Record<string, {
+      pageid?: number
+      extract?: string
+      title?: string
+    }>
+  }
 }
 
-// Supported TheMealDB cuisine areas
-const SUPPORTED_CUISINES = [
-  'American', 'British', 'Canadian', 'Chinese', 'Croatian', 'Dutch', 
-  'Egyptian', 'Filipino', 'French', 'Greek', 'Indian', 'Irish', 
-  'Italian', 'Jamaican', 'Japanese', 'Kenyan', 'Malaysian', 'Mexican', 
-  'Moroccan', 'Polish', 'Portuguese', 'Russian', 'Spanish', 'Thai', 
-  'Tunisian', 'Turkish', 'Vietnamese'
-]
-
-// Map continent/region to broad cuisine category for fallback
-const REGION_TO_CUISINE: Record<string, string> = {
-  'Asia': 'Asian',
-  'Europe': 'European',
-  'Africa': 'African',
-  'Americas': 'American',
-  'Oceania': 'British',
-  'Antarctic': 'British',
+// Map regions to Wikipedia cuisine fallback titles
+const REGION_TO_CUISINE_TITLE: Record<string, string> = {
+  'Western Africa': 'West African cuisine',
+  'Eastern Africa': 'East African cuisine',
+  'Northern Africa': 'North African cuisine',
+  'Southern Africa': 'Cuisine of Southern Africa',
+  'Middle Africa': 'Central African cuisine',
+  'Eastern Asia': 'East Asian cuisine',
+  'South-Eastern Asia': 'Southeast Asian cuisine',
+  'Southern Asia': 'South Asian cuisine',
+  'Western Asia': 'Middle Eastern cuisine',
+  'Central Asia': 'Central Asian cuisine',
+  'Northern Europe': 'Northern European cuisine',
+  'Western Europe': 'Western European cuisine',
+  'Southern Europe': 'Mediterranean cuisine',
+  'Eastern Europe': 'Eastern European cuisine',
+  'Central America': 'Central American cuisine',
+  'Caribbean': 'Caribbean cuisine',
+  'South America': 'South American cuisine',
+  'North America': 'North American cuisine',
+  'Australia and New Zealand': 'Australian cuisine',
+  'Melanesia': 'Oceanian cuisine',
+  'Micronesia': 'Oceanian cuisine',
+  'Polynesia': 'Polynesian cuisine',
 }
 
-// Map region to a supported TheMealDB cuisine for API queries
-const REGION_TO_MEALDB_CUISINE: Record<string, string> = {
-  'Asia': 'Chinese',
-  'Europe': 'Italian',
-  'Africa': 'Moroccan',
-  'Americas': 'American',
-  'Oceania': 'British',
-  'Antarctic': 'British',
+// Broader region fallbacks
+const BROAD_REGION_TO_CUISINE: Record<string, string> = {
+  'Africa': 'African cuisine',
+  'Asia': 'Asian cuisine',
+  'Europe': 'European cuisine',
+  'Americas': 'Latin American cuisine',
+  'Oceania': 'Oceanian cuisine',
+  'Antarctic': 'International cuisine',
 }
 
-interface MealAreaResult {
-  area: string
-  isDirectMatch: boolean
-  regionFallback: string | null
-  continentCuisine: string
-}
-
-// Map country regions/subregions to TheMealDB areas
-function getMealDBArea(region: string, subregion?: string, countryName?: string): MealAreaResult {
-  // Direct country mappings that TheMealDB supports
-  const countryMappings: Record<string, string> = {
-    'Japan': 'Japanese',
-    'China': 'Chinese',
-    'Thailand': 'Thai',
-    'Vietnam': 'Vietnamese',
-    'India': 'Indian',
-    'Malaysia': 'Malaysian',
-    'Philippines': 'Filipino',
-    'Greece': 'Greek',
-    'Italy': 'Italian',
-    'France': 'French',
-    'Spain': 'Spanish',
-    'Portugal': 'Portuguese',
-    'United Kingdom': 'British',
-    'Ireland': 'Irish',
-    'Netherlands': 'Dutch',
-    'Poland': 'Polish',
-    'Russia': 'Russian',
-    'Turkey': 'Turkish',
-    'Egypt': 'Egyptian',
-    'Morocco': 'Moroccan',
-    'Tunisia': 'Tunisian',
-    'Kenya': 'Kenyan',
-    'United States': 'American',
-    'Canada': 'Canadian',
-    'Mexico': 'Mexican',
-    'Jamaica': 'Jamaican',
-    'Croatia': 'Croatian',
+// Fetch Wikipedia cuisine data with fallback
+async function fetchCuisineData(countryName: string, subregion?: string, region?: string): Promise<{
+  content: string | null
+  source: 'country' | 'region' | null
+  sourceTitle: string | null
+}> {
+  // Try country-specific cuisine first
+  const countryTitle = `Cuisine_of_${countryName.replace(/ /g, '_')}`
+  const countryUrl = `https://en.wikipedia.org/w/api.php?action=query&format=json&prop=extracts&exintro&explaintext&titles=${encodeURIComponent(countryTitle)}&origin=*`
+  
+  try {
+    const countryResponse = await fetch(countryUrl)
+    if (countryResponse.ok) {
+      const data: WikipediaData = await countryResponse.json()
+      const pages = data.query?.pages
+      if (pages) {
+        const page = Object.values(pages)[0]
+        if (page?.extract && page.pageid && page.pageid !== -1) {
+          return {
+            content: page.extract,
+            source: 'country',
+            sourceTitle: `Cuisine of ${countryName}`,
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error(`[v0] Wikipedia API error for country cuisine: ${countryName}`, error)
   }
 
-  const continentCuisine = REGION_TO_CUISINE[region] || 'International'
-  const regionFallbackCuisine = REGION_TO_MEALDB_CUISINE[region] || 'Italian'
+  // Try regional cuisine fallback
+  const regionTitle = subregion && REGION_TO_CUISINE_TITLE[subregion]
+    ? REGION_TO_CUISINE_TITLE[subregion]
+    : region && BROAD_REGION_TO_CUISINE[region]
+    ? BROAD_REGION_TO_CUISINE[region]
+    : null
 
-  if (countryName && countryMappings[countryName]) {
-    return {
-      area: countryMappings[countryName],
-      isDirectMatch: true,
-      regionFallback: regionFallbackCuisine,
-      continentCuisine,
+  if (regionTitle) {
+    const regionUrl = `https://en.wikipedia.org/w/api.php?action=query&format=json&prop=extracts&exintro&explaintext&titles=${encodeURIComponent(regionTitle.replace(/ /g, '_'))}&origin=*`
+    
+    try {
+      const regionResponse = await fetch(regionUrl)
+      if (regionResponse.ok) {
+        const data: WikipediaData = await regionResponse.json()
+        const pages = data.query?.pages
+        if (pages) {
+          const page = Object.values(pages)[0]
+          if (page?.extract && page.pageid && page.pageid !== -1) {
+            return {
+              content: page.extract,
+              source: 'region',
+              sourceTitle: regionTitle,
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error(`[v0] Wikipedia API error for regional cuisine: ${regionTitle}`, error)
     }
   }
 
-  // Regional fallbacks - these are NOT direct matches
-  const regionMappings: Record<string, string> = {
-    'Eastern Asia': 'Chinese',
-    'South-Eastern Asia': 'Thai',
-    'Southern Asia': 'Indian',
-    'Western Asia': 'Turkish',
-    'Northern Africa': 'Moroccan',
-    'Eastern Africa': 'Kenyan',
-    'Southern Europe': 'Italian',
-    'Western Europe': 'French',
-    'Northern Europe': 'British',
-    'Eastern Europe': 'Polish',
-    'Central America': 'Mexican',
-    'Caribbean': 'Jamaican',
-    'North America': 'American',
-    'South America': 'Mexican',
-  }
-
-  // Return without direct match - will trigger fallback UI
-  return {
-    area: subregion && regionMappings[subregion] ? regionMappings[subregion] : regionFallbackCuisine,
-    isDirectMatch: false,
-    regionFallback: regionFallbackCuisine,
-    continentCuisine,
-  }
+  return { content: null, source: null, sourceTitle: null }
 }
 
 export async function GET(request: NextRequest) {
