@@ -42,9 +42,13 @@ interface DestinationData {
     capital: string
   }
   localFlavors: {
-    name: string
-    image: string
-    cuisine: string
+    name: string | null
+    image: string | null
+    cuisine: string | null
+    isDirectMatch?: boolean
+    region?: string
+    regionCuisine?: string
+    fallbackArea?: string | null
   } | null
 }
 

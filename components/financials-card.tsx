@@ -1,4 +1,4 @@
-import { Banknote, ArrowRightLeft } from 'lucide-react'
+import { Banknote, ArrowRightLeft, AlertCircle } from 'lucide-react'
 
 interface FinancialsCardProps {
   currencyCode: string
@@ -13,6 +13,9 @@ export function FinancialsCard({
   currencySymbol,
   exchangeRate,
 }: FinancialsCardProps) {
+  // Check if we have valid exchange rate data
+  const hasValidRate = exchangeRate !== null && typeof exchangeRate === 'number' && !isNaN(exchangeRate)
+  
   return (
     <div className="bg-card border border-border rounded-2xl p-6 h-full">
       <div className="flex items-center gap-3 mb-6">
@@ -43,27 +46,46 @@ export function FinancialsCard({
             <ArrowRightLeft className="h-4 w-4 text-muted-foreground" />
             <span className="text-sm text-muted-foreground">Exchange Rate</span>
           </div>
-          <div className="bg-secondary rounded-xl p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-primary/20 rounded-lg flex items-center justify-center">
-                  <span className="text-primary font-bold">$</span>
+          
+          {hasValidRate ? (
+            <div className="bg-secondary rounded-xl p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-primary/20 rounded-lg flex items-center justify-center">
+                    <span className="text-primary font-bold">$</span>
+                  </div>
+                  <div>
+                    <p className="font-semibold text-foreground">1 USD</p>
+                    <p className="text-xs text-muted-foreground">US Dollar</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="font-semibold text-foreground">1 USD</p>
-                  <p className="text-xs text-muted-foreground">US Dollar</p>
+                <ArrowRightLeft className="h-4 w-4 text-muted-foreground" />
+                <div className="text-right">
+                  <p className="font-semibold text-foreground">
+                    {exchangeRate.toFixed(2)}{' '}
+                    <span className="text-primary">{currencyCode}</span>
+                  </p>
+                  <p className="text-xs text-muted-foreground">{currencyName}</p>
                 </div>
-              </div>
-              <ArrowRightLeft className="h-4 w-4 text-muted-foreground" />
-              <div className="text-right">
-                <p className="font-semibold text-foreground">
-                  {exchangeRate !== null ? exchangeRate.toFixed(2) : 'N/A'}{' '}
-                  <span className="text-primary">{currencyCode}</span>
-                </p>
-                <p className="text-xs text-muted-foreground">{currencyName}</p>
               </div>
             </div>
-          </div>
+          ) : (
+            <div className="bg-secondary/50 rounded-xl p-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-muted/50 rounded-lg flex items-center justify-center flex-shrink-0">
+                  <AlertCircle className="h-5 w-5 text-muted-foreground" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-foreground">
+                    Exchange rate data temporarily unavailable
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    The {currencyCode} currency may not be supported or the service is unavailable
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
