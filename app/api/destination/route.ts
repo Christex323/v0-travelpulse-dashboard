@@ -43,6 +43,103 @@ interface WikipediaData {
   }
 }
 
+// TheMealDB has curated dishes for these 28 countries — use it first
+const COUNTRY_TO_MEALDB_AREA: Record<string, string> = {
+  'United States': 'American', 'United Kingdom': 'British', 'Canada': 'Canadian',
+  'China': 'Chinese', 'Croatia': 'Croatian', 'Netherlands': 'Dutch',
+  'Egypt': 'Egyptian', 'Philippines': 'Filipino', 'France': 'French',
+  'Greece': 'Greek', 'India': 'Indian', 'Ireland': 'Irish', 'Italy': 'Italian',
+  'Jamaica': 'Jamaican', 'Japan': 'Japanese', 'Kenya': 'Kenyan',
+  'Malaysia': 'Malaysian', 'Mexico': 'Mexican', 'Morocco': 'Moroccan',
+  'Poland': 'Polish', 'Portugal': 'Portuguese', 'Russia': 'Russian',
+  'Spain': 'Spanish', 'Thailand': 'Thai', 'Tunisia': 'Tunisian',
+  'Turkey': 'Turkish', 'Ukraine': 'Ukrainian', 'Vietnam': 'Vietnamese',
+}
+
+// Category titles to skip when searching Wikipedia — not actual dish categories
+const SKIP_CAT = ['stubs', 'template', 'redirect', 'portal', 'by country', 'by region']
+// Page titles to skip — non-dish articles that end up in cuisine categories
+const SKIP_DISH = ['cuisine', 'cooking', 'chef', 'restaurant', 'network', 'television', 'culture', 'history', 'people', 'list of', 'food security', 'agriculture']
+
+async function findLocalDish(countryName: string): Promise<{
+  name: string | null
+  image: string | null
+  cuisine: string
+}> {
+  // Step 1: TheMealDB for countries with direct area support (curated, reliable images)
+  const mealdbArea = COUNTRY_TO_MEALDB_AREA[countryName]
+  if (mealdbArea) {
+    try {
+      const res = await fetch(`https://www.themealdb.com/api/json/v1/1/filter.php?a=${mealdbArea}`)
+      if (res.ok) {
+        const data = await res.json()
+        if (data.meals?.length > 0) {
+          // Pick a well-known dish: take from the middle of the list to avoid
+          // purely alphabetical-first picks (which can be obscure)
+          const idx = Math.min(3, Math.floor(data.meals.length / 4))
+          const meal = data.meals[idx]
+          return { name: meal.strMeal, image: meal.strMealThumb, cuisine: countryName }
+        }
+      }
+    } catch (e) {
+      console.error('[v0] TheMealDB error', e)
+    }
+  }
+
+  // Step 2: For all other countries, find the Wikipedia cuisine category
+  let categoryTitle: string | null = null
+  try {
+    const res = await fetch(
+      `https://en.wikipedia.org/w/api.php?action=query&format=json&list=search&srsearch=${encodeURIComponent(countryName + ' cuisine')}&srnamespace=14&srlimit=5&origin=*`
+    )
+    if (res.ok) {
+      const data = await res.json()
+      // Skip stub/template/redirect categories, take first real cuisine category
+      const match = (data?.query?.search ?? []).find(
+        (r: { title: string }) => !SKIP_CAT.some(s => r.title.toLowerCase().includes(s))
+      )
+      categoryTitle = match?.title ?? null
+    }
+  } catch (e) {
+    console.error('[v0] Wikipedia category search error', e)
+  }
+
+  if (!categoryTitle) return { name: null, image: null, cuisine: countryName }
+
+  // Step 3: One call — get category members + article sizes + images together
+  // Sort by article size descending: larger articles = more notable/popular dishes
+  try {
+    const res = await fetch(
+      `https://en.wikipedia.org/w/api.php?action=query&format=json` +
+      `&generator=categorymembers&gcmtitle=${encodeURIComponent(categoryTitle)}&gcmlimit=30&gcmtype=page` +
+      `&prop=info%7Cpageimages&pithumbsize=400&origin=*`
+    )
+    if (res.ok) {
+      const data = await res.json()
+      const pages: Array<{ title: string; length: number; thumbnail?: { source: string } }> =
+        Object.values(data?.query?.pages ?? {}) as Array<{ title: string; length: number; thumbnail?: { source: string } }>
+
+      const dishes = pages
+        .filter(p => !SKIP_DISH.some(s => p.title.toLowerCase().includes(s)))
+        .sort((a, b) => (b.length ?? 0) - (a.length ?? 0))
+
+      // Return the most notable dish that has an image
+      const withImage = dishes.find(p => p.thumbnail?.source)
+      if (withImage) {
+        return { name: withImage.title, image: withImage.thumbnail!.source, cuisine: countryName }
+      }
+      // Fallback: most notable dish even without image
+      if (dishes.length > 0) {
+        return { name: dishes[0].title, image: null, cuisine: countryName }
+      }
+    }
+  } catch (e) {
+    console.error('[v0] Wikipedia generator query error', e)
+  }
+
+  return { name: null, image: null, cuisine: countryName }
+}
+
 // Map regions to Wikipedia cuisine fallback titles
 const REGION_TO_CUISINE_TITLE: Record<string, string> = {
   'Western Africa': 'West African cuisine',
@@ -180,15 +277,8 @@ export async function GET(request: NextRequest) {
       ? countryData.currencies?.[currencyCode]
       : null
 
-    // Get meal area based on country/region
-    const mealArea = getMealDBArea(
-      countryData.region,
-      countryData.subregion,
-      countryData.name.common
-    )
-
-    // Fetch weather, exchange rate, and meals concurrently using Promise.all
-    const [weatherResult, exchangeResult, mealResult] = await Promise.all([
+    // Fetch weather, exchange rate, and country-specific dish concurrently
+    const [weatherResult, exchangeResult, localDish] = await Promise.all([
       // Weather API call with timezone
       fetch(
         `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,weather_code&timezone=auto`
@@ -196,63 +286,39 @@ export async function GET(request: NextRequest) {
         .then((res) => (res.ok ? res.json() : null))
         .catch(() => null) as Promise<(WeatherData & { timezone: string }) | null>,
 
-      // Exchange rate API call (Frankfurter) with robust error handling
+      // Exchange rate API call (open.er-api.com — free, 160+ currencies, no key needed)
       currencyCode && currencyCode !== 'USD'
-        ? fetch(`https://api.frankfurter.app/latest?from=USD&to=${currencyCode}`)
+        ? fetch(`https://open.er-api.com/v6/latest/USD`)
             .then((res) => {
               if (!res.ok) {
-                console.error(`[v0] Frankfurter API failed for currency: ${currencyCode}, status: ${res.status}`)
+                console.error(`[v0] open.er-api failed, status: ${res.status}`)
                 return null
               }
               return res.json()
             })
             .then((data) => {
-              // Validate that rates object exists and has the expected currency
-              if (data && data.rates && typeof data.rates[currencyCode] === 'number') {
-                return data as ExchangeRateData
+              if (data?.result === 'success' && data.rates && typeof data.rates[currencyCode] === 'number') {
+                return { rates: { [currencyCode]: data.rates[currencyCode] } } as ExchangeRateData
               }
-              console.error(`[v0] Frankfurter API returned invalid data for currency: ${currencyCode}`, data)
+              console.error(`[v0] open.er-api returned no rate for currency: ${currencyCode}`, data)
               return null
             })
             .catch((err) => {
-              console.error(`[v0] Frankfurter API error for currency: ${currencyCode}`, err)
+              console.error(`[v0] open.er-api error for currency: ${currencyCode}`, err)
               return null
             }) as Promise<ExchangeRateData | null>
         : Promise.resolve(currencyCode === 'USD' ? { rates: { USD: 1 } } : null),
 
-      // TheMealDB API call for regional dishes - only fetch if direct match
-      mealArea.isDirectMatch
-        ? fetch(`https://www.themealdb.com/api/json/v1/1/filter.php?a=${mealArea.area}`)
-            .then((res) => (res.ok ? res.json() : null))
-            .catch(() => null) as Promise<MealData | null>
-        : Promise.resolve(null),
+      // Country-specific dish via Wikipedia cuisine category + pageimages
+      findLocalDish(countryData.name.common),
     ])
 
-    // Pick a random meal from the results (if available and direct match)
-    let localDish = null
-    if (mealArea.isDirectMatch && mealResult?.meals && mealResult.meals.length > 0) {
-      const randomIndex = Math.floor(Math.random() * Math.min(mealResult.meals.length, 10))
-      const meal = mealResult.meals[randomIndex]
-      localDish = {
-        name: meal.strMeal,
-        image: meal.strMealThumb,
-        cuisine: mealArea.area,
-        isDirectMatch: true,
-      }
+    const localFlavorsData = {
+      name: localDish.name,
+      image: localDish.image,
+      cuisine: localDish.cuisine,
+      hasImage: localDish.image !== null,
     }
-
-    // Build local flavors response with fallback info
-    const localFlavorsData = localDish
-      ? localDish
-      : {
-          name: null,
-          image: null,
-          cuisine: null,
-          isDirectMatch: false,
-          region: countryData.region,
-          regionCuisine: mealArea.continentCuisine,
-          fallbackArea: mealArea.regionFallback,
-        }
 
     // Build response
     const response = {
@@ -281,8 +347,8 @@ export async function GET(request: NextRequest) {
         currencyName: currencyInfo?.name ?? 'N/A',
         currencySymbol: currencyInfo?.symbol ?? '',
         exchangeRate:
-          currencyCode && exchangeResult?.rates?.[currencyCode]
-            ? exchangeResult.rates[currencyCode]
+          currencyCode && exchangeResult?.rates
+            ? (exchangeResult.rates as Record<string, number>)[currencyCode] ?? null
             : currencyCode === 'USD'
             ? 1
             : null,
