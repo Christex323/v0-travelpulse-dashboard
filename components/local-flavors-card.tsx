@@ -69,4 +69,4 @@ export function LocalFlavorsCard({ dish }: LocalFlavorsCardProps) {
       )}
     </div>
   )
-}
+}sierr
