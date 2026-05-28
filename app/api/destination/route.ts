@@ -203,11 +203,28 @@ export async function GET(request: NextRequest) {
         .then((res) => (res.ok ? res.json() : null))
         .catch(() => null) as Promise<(WeatherData & { timezone: string }) | null>,
 
-      // Exchange rate API call (Frankfurter)
+      // Exchange rate API call (Frankfurter) with robust error handling
       currencyCode && currencyCode !== 'USD'
         ? fetch(`https://api.frankfurter.app/latest?from=USD&to=${currencyCode}`)
-            .then((res) => (res.ok ? res.json() : null))
-            .catch(() => null) as Promise<ExchangeRateData | null>
+            .then((res) => {
+              if (!res.ok) {
+                console.error(`[v0] Frankfurter API failed for currency: ${currencyCode}, status: ${res.status}`)
+                return null
+              }
+              return res.json()
+            })
+            .then((data) => {
+              // Validate that rates object exists and has the expected currency
+              if (data && data.rates && typeof data.rates[currencyCode] === 'number') {
+                return data as ExchangeRateData
+              }
+              console.error(`[v0] Frankfurter API returned invalid data for currency: ${currencyCode}`, data)
+              return null
+            })
+            .catch((err) => {
+              console.error(`[v0] Frankfurter API error for currency: ${currencyCode}`, err)
+              return null
+            }) as Promise<ExchangeRateData | null>
         : Promise.resolve(currencyCode === 'USD' ? { rates: { USD: 1 } } : null),
 
       // TheMealDB API call for regional dishes - only fetch if direct match
