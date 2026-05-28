@@ -44,11 +44,8 @@ interface DestinationData {
   localFlavors: {
     name: string | null
     image: string | null
-    cuisine: string | null
-    isDirectMatch?: boolean
-    region?: string
-    regionCuisine?: string
-    fallbackArea?: string | null
+    cuisine: string
+    hasImage: boolean
   } | null
 }
 
